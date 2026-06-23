@@ -308,10 +308,15 @@
     }, 300);
   });
 
-  const gridStyle = $derived(
-    `background-position:${board.camera.x}px ${board.camera.y}px;` +
-      `background-size:${GRID * board.camera.scale}px ${GRID * board.camera.scale}px;`,
-  );
+  const gridStyle = $derived.by(() => {
+    const s = board.camera.scale;
+    const dotR = Math.max(0.9, 1.4 * s);
+    return (
+      `background-position:${board.camera.x}px ${board.camera.y}px;` +
+      `background-size:${GRID * s}px ${GRID * s}px;` +
+      `--dot-r:${dotR}px;`
+    );
+  });
   const worldStyle = $derived(
     `transform:translate(${board.camera.x}px,${board.camera.y}px) scale(${board.camera.scale});`,
   );
@@ -454,7 +459,11 @@
     inset: 0;
     overflow: hidden;
     background-color: var(--paper);
-    background-image: radial-gradient(circle, var(--dot) 1.4px, transparent 1.6px);
+    background-image: radial-gradient(
+      circle,
+      var(--dot) var(--dot-r, 1.4px),
+      transparent calc(var(--dot-r, 1.4px) + 0.4px)
+    );
     cursor: default;
   }
   .viewport.panning {
