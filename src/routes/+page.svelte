@@ -596,6 +596,9 @@
     transform: scale(1.34) rotate(-4deg);
     box-shadow: 0 12px 30px rgba(229, 72, 77, 0.3);
   }
+  .trash svg {
+    overflow: visible;
+  }
   .trash .lid {
     transition: transform 0.32s var(--ease-soft);
     transform-box: fill-box;
