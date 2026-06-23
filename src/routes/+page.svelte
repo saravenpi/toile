@@ -691,14 +691,12 @@
   }
   .zinfo {
     height: 54px;
+    line-height: 54px;
     border-radius: 999px;
     padding: 0 18px;
     min-width: 70px;
-    display: grid;
-    grid-auto-flow: column;
-    align-items: baseline;
-    justify-content: center;
-    gap: 1px;
+    text-align: center;
+    white-space: nowrap;
     font-size: 17px;
     font-weight: 650;
     color: var(--ink);
@@ -706,12 +704,19 @@
     font-feature-settings: "tnum" 1;
     letter-spacing: 0.01em;
   }
+  .zval,
   .zpct {
+    vertical-align: baseline;
+  }
+  .zpct {
+    margin-left: 1px;
     font-size: 13px;
     font-weight: 600;
     color: var(--ink-soft);
   }
   .zghost {
+    margin-left: 0;
+    margin-right: 1px;
     visibility: hidden;
   }
   .znav:hover,
