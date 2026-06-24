@@ -470,9 +470,11 @@
   function openLightbox(el: HTMLImageElement | HTMLVideoElement, kind: "image" | "video") {
     if (el instanceof HTMLVideoElement) el.pause();
     lightboxOrigin = el.getBoundingClientRect();
-    lightboxSourceEl = el;
+    // hide the whole player card (button + bar), not just the <video>, so nothing
+    // of the source peeks out from behind the flying hero mid-transition.
+    lightboxSourceEl = (el.closest(".vplayer") as HTMLElement) ?? el;
     lightboxKind = kind;
-    el.style.visibility = "hidden";
+    lightboxSourceEl.style.visibility = "hidden";
     lightbox = el instanceof HTMLImageElement ? el.currentSrc || el.src : el.src;
   }
 

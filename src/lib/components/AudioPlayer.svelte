@@ -85,9 +85,11 @@
     aria-valuemax="100"
     tabindex="-1"
   >
-    <span class="track"></span>
+    <svg class="wave bg" viewBox="0 0 {VB_W} 24" preserveAspectRatio="none">
+      <g class="amp"><path d={wavePath} vector-effect="non-scaling-stroke" /></g>
+    </svg>
     <div class="fg" style="clip-path: inset(0 {100 - pct}% 0 0)">
-      <svg class="wave" viewBox="0 0 {VB_W} 24" preserveAspectRatio="none">
+      <svg class="wave fg-wave" viewBox="0 0 {VB_W} 24" preserveAspectRatio="none">
         <g class="amp">
           <g class="travel">
             <path d={wavePath} vector-effect="non-scaling-stroke" />
@@ -174,22 +176,14 @@
     cursor: pointer;
     touch-action: none;
   }
-  .track {
-    position: absolute;
-    left: 0;
-    right: 0;
-    top: 50%;
-    height: 3px;
-    transform: translateY(-50%);
-    border-radius: 99px;
-    background: rgba(40, 38, 32, 0.2);
-  }
   .fg {
     position: absolute;
     inset: 0;
     overflow: hidden;
   }
   .wave {
+    position: absolute;
+    inset: 0;
     width: 100%;
     height: 100%;
     fill: none;
@@ -197,6 +191,9 @@
     stroke-width: 2.4;
     stroke-linecap: round;
     stroke-linejoin: round;
+  }
+  .wave.bg {
+    stroke: rgba(40, 38, 32, 0.28);
   }
   .amp {
     transform: scaleY(var(--amp));
