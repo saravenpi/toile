@@ -7,10 +7,12 @@
     kind,
     raw,
     name,
+    focused = false,
   }: {
     kind: Exclude<AssetKind, "image">;
     raw: string;
     name: string;
+    focused?: boolean;
   } = $props();
 
   const src = $derived(resolveAssetSrc(raw));
@@ -21,7 +23,7 @@
 </script>
 
 {#if kind === "video" && playable && !failed}
-  <VideoPlayer {src} onfail={() => (failed = true)} />
+  <VideoPlayer {src} {focused} onfail={() => (failed = true)} />
 {:else if kind === "audio" && playable && !failed}
   <AudioPlayer {src} {name} onfail={() => (failed = true)} />
 {:else}

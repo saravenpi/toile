@@ -1,9 +1,13 @@
 <script lang="ts">
-  let { src, onfail }: { src: string; onfail?: () => void } = $props();
+  let {
+    src,
+    onfail,
+    focused = false,
+  }: { src: string; onfail?: () => void; focused?: boolean } = $props();
 
   // Minimal custom player — no native chrome. The #t=0.001 fragment paints a
-  // still first frame as the poster; the centre button plays inline (without
-  // opening the lightbox), and a thin bar tracks/seeks progress.
+  // still first frame as the poster; the centre button plays inline, and a thin
+  // bar tracks/seeks progress. When `focused` (zoomed in) the controls stay up.
   const posterSrc = $derived(`${src}#t=0.001`);
 
   let video = $state<HTMLVideoElement | null>(null);
@@ -39,7 +43,7 @@
   }
 </script>
 
-<div class="vplayer" class:playing>
+<div class="vplayer" class:playing class:focused>
   <!-- svelte-ignore a11y_media_has_caption -->
   <video
     bind:this={video}
@@ -175,7 +179,12 @@
     box-shadow: 0 0 6px rgba(255, 255, 255, 0.5);
   }
   .vplayer.playing .vbar,
-  .vplayer:hover .vbar {
+  .vplayer:hover .vbar,
+  .vplayer.focused .vbar {
+    opacity: 1;
+  }
+  /* zoomed-in: keep the full controls up the whole time, playing or paused */
+  .vplayer.focused .vid-play {
     opacity: 1;
   }
 </style>

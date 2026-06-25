@@ -4,15 +4,17 @@
     onZoomIn,
     onZoomOut,
     onReset,
+    hidden = false,
   }: {
     zoom: number;
     onZoomIn: () => void;
     onZoomOut: () => void;
     onReset: () => void;
+    hidden?: boolean;
   } = $props();
 </script>
 
-<div class="zoom" data-ui>
+<div class="zoom" class:hidden data-ui>
   <button class="znav liquid-glass" onclick={onZoomOut} aria-label="Zoom out">
     <svg
       viewBox="0 0 24 24"
@@ -56,6 +58,15 @@
     display: flex;
     align-items: center;
     gap: 10px;
+    transition:
+      opacity 0.3s var(--ease-soft),
+      transform 0.3s var(--ease-soft);
+  }
+  /* slide the controls down and out while a media note is zoomed in */
+  .zoom.hidden {
+    opacity: 0;
+    transform: translateY(16px);
+    pointer-events: none;
   }
   .znav,
   .zinfo {

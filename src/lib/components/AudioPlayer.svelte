@@ -20,9 +20,14 @@
   let playing = $state(false);
   let cur = $state(0);
   let dur = $state(0);
+  // Play from an in-memory blob URL, not the asset:// src directly: WKWebView
+  // streams the asset protocol in ranges and stalls playback at a chunk boundary
+  // (progress freezes ~⅓ in, then resumes). A blob is fully in memory — no stall.
+  let objectUrl = $state<string | null>(null);
   const pct = $derived(dur > 0 ? Math.min(100, (cur / dur) * 100) : 0);
 
-  let wavePath = $state(`M0 ${MID} L${VB_W} ${MID}`);
+  const STEP = 3; // viewBox px between sampled points — denser = smoother curve
+  let wavePath = $state(`M0 ${MID} L0 ${MID}`);
   let tipY = $state(MID); // viewBox y of the wave at the playhead → drives the thumb
   const thumbTop = $derived((tipY / 24) * 100);
 
@@ -30,17 +35,46 @@
   let amp = 0;
   let raf = 0;
   let prev = 0;
+  let lastNow = 0; // performance.now() of the previous playing frame (see render)
 
   const waveAt = (x: number) => MID + amp * Math.sin((2 * Math.PI * x) / LAMBDA + phase);
 
-  function render() {
-    // read the live position every frame — `timeupdate` only fires ~4×/s, which
-    // makes the thumb jump in steps; currentTime is continuous, so it glides.
-    if (audio) cur = audio.currentTime;
+  // Draw the wave only up to the playhead (no clip-path — clipping the full path
+  // every frame is what made it stutter). The path literally ends at the tip, so
+  // stroke-linecap:round gives the leading edge a rounded cap.
+  function buildWave() {
+    const playX = (pct / 100) * VB_W;
     let d = `M0 ${waveAt(0).toFixed(2)}`;
-    for (let x = 4; x <= VB_W; x += 4) d += ` L${x} ${waveAt(x).toFixed(2)}`;
+    for (let x = STEP; x < playX; x += STEP) d += ` L${x.toFixed(1)} ${waveAt(x).toFixed(2)}`;
+    d += ` L${playX.toFixed(2)} ${waveAt(playX).toFixed(2)}`;
     wavePath = d;
-    tipY = waveAt((pct / 100) * VB_W);
+    tipY = waveAt(playX);
+  }
+
+  function render() {
+    // Smooth, MONOTONIC playhead. `currentTime` advances in coarse, jittery
+    // steps (decoder-dependent ~250ms), so reading it raw makes the bar freeze
+    // then snap. We instead integrate the playhead off a wall clock each frame
+    // and only ever nudge it FORWARD toward reality — never snap it back (that
+    // was the visible backward jump). The lead is capped so it can't drift away.
+    if (audio) {
+      if (playing) {
+        const now = performance.now();
+        const dt = lastNow ? Math.min(0.25, (now - lastNow) / 1000) : 0;
+        lastNow = now;
+        const real = audio.currentTime;
+        let next = cur + dt * (audio.playbackRate || 1);
+        if (next < real)
+          next = real; // real ran ahead (seek / catch-up) → follow it forward
+        else if (next > real + 0.5) next = real + 0.5; // bound the lead, never trail back
+        if (dur) next = Math.min(next, dur);
+        cur = Math.max(cur, next); // monotonic: never step backward mid-play
+      } else {
+        cur = audio.currentTime;
+        lastNow = 0;
+      }
+    }
+    buildWave();
   }
 
   function frame(t: number) {
@@ -73,13 +107,31 @@
   });
 
   $effect(() => {
-    pct; // keep the thumb correct when seeking while the loop is idle (paused)
-    if (!raf) tipY = waveAt((pct / 100) * VB_W);
+    pct; // keep the wave + thumb correct when seeking while idle (paused)
+    if (!raf) buildWave();
+  });
+
+  $effect(() => {
+    let url: string | null = null;
+    let cancelled = false;
+    fetch(src)
+      .then((r) => r.blob())
+      .then((b) => {
+        if (cancelled) return;
+        url = URL.createObjectURL(b);
+        objectUrl = url;
+      })
+      .catch(() => onfail?.());
+    return () => {
+      cancelled = true;
+      if (url) URL.revokeObjectURL(url);
+      objectUrl = null;
+    };
   });
 
   function toggle() {
     const a = audio;
-    if (!a) return;
+    if (!a || !objectUrl) return;
     if (a.paused) a.play().catch(() => onfail?.());
     else a.pause();
   }
@@ -89,6 +141,9 @@
     if (!a || !dur) return;
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
     a.currentTime = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * dur;
+    cur = a.currentTime;
+    lastNow = 0;
+    if (!raf) buildWave();
   }
 
   function fmt(t: number): string {
@@ -136,7 +191,7 @@
     tabindex="-1"
   >
     <span class="track" style="clip-path: inset(0 0 0 calc({pct}% + 4px))"></span>
-    <div class="fg" style="clip-path: inset(0 {100 - pct}% 0 0)">
+    <div class="fg">
       <svg class="wave" viewBox="0 0 {VB_W} 24" preserveAspectRatio="none">
         <path d={wavePath} vector-effect="non-scaling-stroke" />
       </svg>
@@ -144,15 +199,25 @@
     <span class="thumb" style="left:{pct}%; top:{thumbTop}%"></span>
   </div>
 
+  <!-- src is an in-memory blob URL (see objectUrl) so playback never stalls on
+       the asset:// protocol's range requests. -->
   <audio
     bind:this={audio}
-    {src}
-    preload="metadata"
-    onplay={() => (playing = true)}
-    onpause={() => (playing = false)}
-    onended={() => (playing = false)}
+    src={objectUrl}
+    onplay={() => {
+      playing = true;
+      lastNow = 0;
+    }}
+    onpause={() => {
+      playing = false;
+      if (audio) cur = audio.currentTime;
+    }}
+    onended={() => {
+      playing = false;
+      cur = dur;
+    }}
     onloadedmetadata={() => (dur = audio?.duration ?? 0)}
-    ontimeupdate={() => (cur = audio?.currentTime ?? 0)}
+    ondurationchange={() => (dur = audio?.duration ?? 0)}
     onerror={() => onfail?.()}
   ></audio>
 </div>
@@ -239,6 +304,9 @@
     inset: 0;
     width: 100%;
     height: 100%;
+    /* let the round cap at x=0 render — it sits just outside the viewBox and the
+       SVG's default overflow:hidden was clipping it flat. */
+    overflow: visible;
     fill: none;
     stroke: var(--ink);
     stroke-width: 2.4;

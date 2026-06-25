@@ -12,8 +12,14 @@
   import Trash from "$lib/components/Trash.svelte";
   import ContextMenu from "$lib/components/ContextMenu.svelte";
   import PasteMenu from "$lib/components/PasteMenu.svelte";
-  import Lightbox from "$lib/components/Lightbox.svelte";
-  import { board, COLORS, MIN_SCALE, MAX_SCALE, type Note } from "$lib/board.svelte";
+  import {
+    board,
+    COLORS,
+    MIN_SCALE,
+    MAX_SCALE,
+    type Note,
+    type Camera,
+  } from "$lib/board.svelte";
   import { assetKind, assetPath, isAssetOnly } from "$lib/assets";
 
   const GRID = 26;
@@ -39,11 +45,13 @@
     wy: number;
   } | null>(null);
   let pasteImage: Image | null = null;
-  let lightbox = $state<string | null>(null);
-  let lightboxKind = $state<"image" | "video" | "audio">("image");
-  let lightboxName = $state("");
-  let lightboxOrigin = $state<DOMRect | null>(null);
-  let lightboxSourceEl: HTMLElement | null = null;
+  // Media "focus": the note whose image/video/audio is zoomed in. The camera
+  // tweens to frame it (same move a postit makes entering edit mode) while the
+  // rest of the board blurs back. prevCamera restores the view on dismiss.
+  let focusedId = $state<string | null>(null);
+  let prevCamera: Camera | null = null;
+  // the view to glide back to when a postit leaves edit mode, mirroring media
+  let editPrevCamera: Camera | null = null;
 
   let toast = $state<string | null>(null);
   let toastTimer: ReturnType<typeof setTimeout>;
@@ -106,6 +114,7 @@
   }
 
   function focusNote(note: Note) {
+    editPrevCamera = { ...board.camera };
     editingId = note.id;
     selectedId = note.id;
     const targetScale = clamp(
@@ -122,8 +131,21 @@
     });
   }
 
+  // bare close, no camera move — used by flows that immediately do their own
+  // thing (add a note, drop assets, reset the view).
   function commitEdit() {
     editingId = null;
+    editPrevCamera = null;
+  }
+
+  // user-driven exit (Escape / click-away): close and glide back to where the
+  // view was before edit mode, exactly like dismissing a zoomed-in media note.
+  function exitEdit() {
+    if (editingId === null) return;
+    const back = editPrevCamera;
+    editingId = null;
+    editPrevCamera = null;
+    if (back) animateCamera(back);
   }
 
   function resetView() {
@@ -143,6 +165,10 @@
   }
 
   function onWheel(e: WheelEvent) {
+    // locked while a media is fullscreen / a postit is being edited — otherwise
+    // you'd pan the canvas out from under the thing you're focused on. Bail
+    // before preventDefault so a long note's textarea can still scroll natively.
+    if (spotlightId !== null) return;
     e.preventDefault();
     stopTween();
     menu = null;
@@ -371,6 +397,27 @@
     const target = e.target as HTMLElement;
     const noteEl = target.closest("[data-note]") as HTMLElement | null;
 
+    // interactive bits inside a note (markdown checkboxes) own their pointer:
+    // let the native control handle the click — never drag/select/edit the note.
+    if (target.closest("[data-interactive]")) return;
+
+    // while a media note is zoomed in, clicks land like a lightbox: inside it
+    // reaches its own controls, anything else dismisses the zoom.
+    if (focusedId) {
+      if (noteEl?.dataset.note !== focusedId) unfocusMedia();
+      return;
+    }
+
+    // while editing, a click outside the note leaves edit mode and glides the
+    // view home; a click inside falls through to the textarea (cursor placement).
+    if (editingId) {
+      if (noteEl?.dataset.note !== editingId) {
+        exitEdit();
+        selectedId = null;
+      }
+      return;
+    }
+
     if (noteEl) {
       const id = noteEl.dataset.note!;
       if (id === editingId) return;
@@ -463,14 +510,10 @@
     const chip = target?.closest(".note-file") as HTMLElement | null;
     if (chip?.dataset.asset) return openAsset(chip.dataset.asset);
 
-    const img = target?.closest(".note-img") as HTMLImageElement | null;
-    if (img) return openLightbox(img, "image");
-
-    const video = target?.closest(".note-media") as HTMLVideoElement | null;
-    if (video) return openLightbox(video, "video");
-
-    const audio = target?.closest(".note-audio") as HTMLElement | null;
-    if (audio) return openAudioLightbox(audio);
+    const media = target?.closest(
+      ".note-img, .note-media, .note-audio",
+    ) as HTMLElement | null;
+    if (media) return focusMedia(note, media);
 
     if (isAssetOnly(note.text)) return; // bare media with no hit — nothing to do
 
@@ -495,49 +538,67 @@
     (isUrl ? openUrl(raw) : openPath(assetPath(raw))).catch(() => {});
   }
 
-  // Shared-element zoom: hand the lightbox the very element the user clicked and
-  // hide the on-canvas one, so a single image/video appears to fly out and blur
-  // the board, then back. Visibility is restored once the close animation lands.
-  function openLightbox(el: HTMLImageElement | HTMLVideoElement, kind: "image" | "video") {
-    if (el instanceof HTMLVideoElement) el.pause();
-    lightboxOrigin = el.getBoundingClientRect();
-    // hide the whole player card (button + bar), not just the <video>, so nothing
-    // of the source peeks out from behind the flying hero mid-transition.
-    lightboxSourceEl = (el.closest(".vplayer") as HTMLElement) ?? el;
-    lightboxKind = kind;
-    lightboxName = "";
-    lightboxSourceEl.style.visibility = "hidden";
-    lightbox = el instanceof HTMLImageElement ? el.currentSrc || el.src : el.src;
+  // Zoom the board so the clicked media fills the view — the same camera move a
+  // postit makes on edit — and mark it focused so every other note blurs back.
+  // The element never moves; only the camera does. prevCamera is the way home.
+  function focusMedia(note: Note, el: HTMLElement) {
+    prevCamera = { ...board.camera };
+    board.bringToFront(note);
+    selectedId = note.id;
+    focusedId = note.id;
+
+    // Fit the media's own box (fall back to the whole note) into ~84% of the
+    // viewport, then center it. rect is in screen px, so divide out the current
+    // scale to recover world units before computing the target scale.
+    let cx = note.x + note.w / 2;
+    let cy = note.y + note.h / 2;
+    let ww = note.w;
+    let wh = note.h;
+    const r = el.getBoundingClientRect();
+    if (r.width && r.height) {
+      const c = toWorld(r.left + r.width / 2, r.top + r.height / 2);
+      cx = c.x;
+      cy = c.y;
+      ww = r.width / board.camera.scale;
+      wh = r.height / board.camera.scale;
+    }
+    const margin = 0.84;
+    const s = clamp(
+      Math.min((window.innerWidth * margin) / ww, (window.innerHeight * margin) / wh),
+      MIN_SCALE,
+      MAX_SCALE,
+    );
+    animateCamera({
+      x: window.innerWidth / 2 - cx * s,
+      y: window.innerHeight / 2 - cy * s,
+      scale: s,
+    });
   }
 
-  // Audio has no shared visual to FLIP, so its fullscreen viewer scale-fades a
-  // big player in. We read src/name off the card's data-* and pause the inline one.
-  function openAudioLightbox(el: HTMLElement) {
-    (el.querySelector("audio") as HTMLAudioElement | null)?.pause();
-    lightboxOrigin = el.getBoundingClientRect();
-    // audio has no shared element to morph, so leave the card on the board
-    // (behind the blur) — the viewer just scale-fades over it and back.
-    lightboxSourceEl = null;
-    lightboxKind = "audio";
-    lightboxName = el.dataset.name ?? "";
-    lightbox = el.dataset.src ?? "";
-  }
-
-  function closeLightbox() {
-    if (lightboxSourceEl) lightboxSourceEl.style.visibility = "";
-    lightboxSourceEl = null;
-    lightbox = null;
+  function unfocusMedia() {
+    if (!focusedId) return;
+    // pause whatever was playing so audio doesn't linger after the zoom-out
+    document
+      .querySelector(`[data-note="${focusedId}"]`)
+      ?.querySelectorAll("video, audio")
+      .forEach((m) => (m as HTMLMediaElement).pause());
+    focusedId = null;
+    if (prevCamera) animateCamera(prevCamera);
+    prevCamera = null;
   }
 
   function onKeyDown(e: KeyboardEvent) {
     if (e.key === "Escape") {
-      // the lightbox owns Escape while open (animated close)
-      if (lightbox) return;
+      // a zoomed-in media note dismisses first, restoring the prior view
+      if (focusedId) {
+        unfocusMedia();
+        return;
+      }
       if (pasteMenu) {
         pasteMenu = null;
         return;
       }
-      commitEdit();
+      exitEdit();
       menu = null;
       selectedId = null;
     }
@@ -675,10 +736,29 @@
     return () => window.removeEventListener("resize", resizeGrid);
   });
 
+  // Pan with a GPU transform (cheap, smooth); scale the world separately. The two
+  // scaling methods fail in opposite directions, so we pick by direction:
+  //   • zoom in (s >= 1): `zoom` re-rasterizes vectors during layout -> crisp.
+  //     transform:scale would upscale a cached bitmap -> mushy text/corners.
+  //   • zoom out (s < 1): `transform:scale` downsamples a full-res bitmap ->
+  //     crisp AND keeps ratios uniform. `zoom` instead hits WebKit's minimum
+  //     font-size floor, so text refuses to shrink while cards/controls keep
+  //     shrinking -> text looks oversized when zoomed out.
+  // Geometry is identical either way (screen = cam + world*scale) and the two
+  // coincide at s=1, so the crossover is seamless and toWorld/grid/focus are
+  // unchanged.
+  const panStyle = $derived(
+    `transform:translate(${board.camera.x}px,${board.camera.y}px);`,
+  );
   const worldStyle = $derived(
-    `transform:translate(${board.camera.x}px,${board.camera.y}px) scale(${board.camera.scale});`,
+    board.camera.scale >= 1
+      ? `zoom:${board.camera.scale};`
+      : `transform:scale(${board.camera.scale});`,
   );
   const zoomPct = $derived(Math.round(board.camera.scale * 100));
+  // the note the view is zoomed onto — a fullscreen media OR a postit in edit
+  // mode. Everything else blurs back around it. The two are mutually exclusive.
+  const spotlightId = $derived(focusedId ?? editingId);
   const menuAssetOnly = $derived(
     !!menu &&
       isAssetOnly(board.notes.find((n) => n.id === menu!.id)?.text ?? ""),
@@ -705,16 +785,23 @@
   ondrop={onDrop}
 >
   <canvas bind:this={gridCanvas} class="grid"></canvas>
-  <div class="world" style={worldStyle}>
-    {#each board.notes as note (note.id)}
-      <Postit
-        {note}
-        editing={editingId === note.id}
-        selected={selectedId === note.id}
-        dragging={dragId === note.id}
-        doomed={dragId === note.id && trashHot}
-      />
-    {/each}
+  {#if spotlightId !== null}
+    <div class="dim" transition:fade={{ duration: 300 }}></div>
+  {/if}
+  <div class="pan" style={panStyle}>
+    <div class="world" style={worldStyle}>
+      {#each board.notes as note (note.id)}
+        <Postit
+          {note}
+          editing={editingId === note.id}
+          selected={selectedId === note.id && focusedId !== note.id}
+          dragging={dragId === note.id}
+          doomed={dragId === note.id && trashHot}
+          dimmed={spotlightId !== null && spotlightId !== note.id}
+          focused={focusedId === note.id}
+        />
+      {/each}
+    </div>
   </div>
 
   {#if board.notes.length === 0}
@@ -726,7 +813,7 @@
 
   <Trash bind:el={trashEl} hot={trashHot} armed={dragId !== null} />
 
-  <div class="dock" data-ui>
+  <div class="dock" class:concealed={focusedId !== null} data-ui>
     <Palette colors={COLORS} onpick={addNote} />
     <AttachButton onfiles={addAssetNotes} />
   </div>
@@ -736,6 +823,7 @@
     onZoomIn={() => zoomBy(1.25)}
     onZoomOut={() => zoomBy(1 / 1.25)}
     onReset={resetView}
+    hidden={focusedId !== null}
   />
 </main>
 
@@ -760,16 +848,6 @@
       pasteMenu = null;
       pasteImage = null;
     }}
-  />
-{/if}
-
-{#if lightbox}
-  <Lightbox
-    src={lightbox}
-    kind={lightboxKind}
-    name={lightboxName}
-    origin={lightboxOrigin}
-    onclose={closeLightbox}
   />
 {/if}
 
@@ -823,11 +901,31 @@
   .viewport.panning {
     cursor: grabbing;
   }
-  .world {
+  /* sits above the grid, below the notes: softly blurs the paper so a focused
+     media note (and its own neighbours, which blur themselves) float on a calm
+     backdrop. Blur only — no dim. Fades in/out with the camera zoom. */
+  .dim {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    -webkit-backdrop-filter: blur(3px);
+    backdrop-filter: blur(3px);
+  }
+  /* the pan layer: a translate-only transform so dragging the canvas stays a
+     cheap GPU composite. The crisp scaling lives one level down on .world. */
+  .pan {
     position: absolute;
     top: 0;
     left: 0;
     z-index: 1;
+    transform-origin: 0 0;
+    will-change: transform;
+  }
+  .world {
+    position: absolute;
+    top: 0;
+    left: 0;
     transform-origin: 0 0;
   }
 
@@ -863,6 +961,15 @@
     display: flex;
     align-items: center;
     gap: 12px;
+    transition:
+      opacity 0.3s var(--ease-soft),
+      transform 0.3s var(--ease-soft);
+  }
+  /* tuck the palette + attach dock away while a media note is zoomed in */
+  .dock.concealed {
+    opacity: 0;
+    transform: translateX(-50%) translateY(16px);
+    pointer-events: none;
   }
 
   @media (prefers-reduced-motion: reduce) {
