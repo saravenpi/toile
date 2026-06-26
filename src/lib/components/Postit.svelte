@@ -212,6 +212,16 @@
       0 22px 46px rgba(40, 38, 32, 0.2);
   }
 
+  /* selection ring — outline (not box-shadow) so it survives the hover/drag
+     shadow swaps, and shows on every selected note during a marquee drag. */
+  .note.selected .inner {
+    outline: 2px solid var(--ink);
+    outline-offset: 2px;
+  }
+  .note.asset-only.selected .inner {
+    outline-offset: 0;
+  }
+
   .note.doomed .inner {
     transform: scale(0.82) rotate(-3deg);
     opacity: 0.55;

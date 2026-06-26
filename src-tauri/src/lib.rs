@@ -102,6 +102,49 @@ struct SyncState {
     ztop: Mutex<f64>,
 }
 
+// A real http origin for the YouTube embed: WKWebView drops the Referer for the
+// custom tauri:// scheme, so youtube returns "Error 153". Hosting the iframe from
+// a loopback http server gives it a valid origin and the embed validates.
+struct YtPort(u16);
+
+fn valid_video_id(id: &str) -> bool {
+    id.len() == 11 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+fn yt_embed_page(id: &str) -> String {
+    format!(
+        "<!doctype html><html><head><meta charset=\"utf-8\"><style>html,body{{margin:0;height:100%;background:#000;overflow:hidden}}iframe{{border:0;width:100%;height:100%;display:block}}</style></head><body><iframe src=\"https://www.youtube-nocookie.com/embed/{}?autoplay=1&rel=0&playsinline=1\" allow=\"accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen\" referrerpolicy=\"strict-origin-when-cross-origin\" allowfullscreen></iframe></body></html>",
+        id
+    )
+}
+
+fn start_yt_proxy() -> Option<u16> {
+    let server = tiny_http::Server::http("127.0.0.1:0").ok()?;
+    let port = server.server_addr().to_ip().map(|a| a.port())?;
+    std::thread::spawn(move || {
+        for request in server.incoming_requests() {
+            let id = request
+                .url()
+                .strip_prefix("/yt/")
+                .map(|s| s.split(['?', '#']).next().unwrap_or(s).to_string());
+            let response = match id {
+                Some(ref id) if valid_video_id(id) => {
+                    let body = yt_embed_page(id);
+                    let header = tiny_http::Header::from_bytes(
+                        &b"Content-Type"[..],
+                        &b"text/html; charset=utf-8"[..],
+                    )
+                    .unwrap();
+                    tiny_http::Response::from_string(body).with_header(header)
+                }
+                _ => tiny_http::Response::from_string("bad request").with_status_code(400),
+            };
+            let _ = request.respond(response);
+        }
+    });
+    Some(port)
+}
+
 fn hash_str(s: &str) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     s.hash(&mut h);
@@ -348,6 +391,11 @@ fn load_strokes(state: State<Arc<SyncState>>) -> Result<String, String> {
 fn save_strokes(data: String, state: State<Arc<SyncState>>) -> Result<(), String> {
     let path = state.folder.join(".toile-drawing.json");
     std::fs::write(&path, data).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn yt_port(state: State<YtPort>) -> u16 {
+    state.0
 }
 
 #[tauri::command]
@@ -730,7 +778,8 @@ pub fn run() {
             save_asset,
             load_links,
             save_links,
-            fetch_link_preview
+            fetch_link_preview,
+            yt_port
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]
@@ -741,6 +790,8 @@ pub fn run() {
                     wk.configuration().preferences().setMinimumFontSize(0.0);
                 });
             }
+
+            app.manage(YtPort(start_yt_proxy().unwrap_or(0)));
 
             let folder = load_config_folder();
             std::fs::create_dir_all(&folder).ok();

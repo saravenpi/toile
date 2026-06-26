@@ -1,5 +1,6 @@
 <script lang="ts">
   import { openUrl } from "@tauri-apps/plugin-opener";
+  import { invoke } from "@tauri-apps/api/core";
   import { resolveAssetSrc } from "../assets";
   import { links } from "../links.svelte";
   import { youtubeId, safeExternal, hostOf } from "../links";
@@ -9,6 +10,15 @@
   // YouTube is detected client-side so the facade paints instantly, with no fetch
   // on the critical path — the backend call only enriches it with a title.
   const vid = $derived(youtubeId(url));
+
+  // The embed is served from a loopback http origin (see the Rust yt proxy) so
+  // youtube sees a valid Referer; the tauri:// custom scheme drops it → Error 153.
+  let ytPort = $state(0);
+  $effect(() => {
+    if (ytPort) return;
+    invoke<number>("yt_port").then((p) => (ytPort = p)).catch(() => {});
+  });
+  const ytSrc = $derived(vid && ytPort ? `http://127.0.0.1:${ytPort}/yt/${vid}` : null);
   const meta = $derived(links.get(url) ?? null);
   const host = $derived(hostOf(url));
 
@@ -54,15 +64,16 @@
     tabindex="-1"
     onclick={playing ? undefined : onClick}
   >
-    {#if playing}
+    {#if playing && ytSrc}
       <iframe
         class="yt-frame"
-        src={`https://www.youtube-nocookie.com/embed/${vid}?autoplay=1&rel=0&playsinline=1`}
+        src={ytSrc}
         title={title || "YouTube video"}
-        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
-        referrerpolicy="strict-origin-when-cross-origin"
+        allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
         allowfullscreen
       ></iframe>
+    {:else if playing}
+      <div class="yt-frame"></div>
     {:else}
       <img class="yt-thumb" src={thumb} alt={title || "video thumbnail"} draggable="false" />
       <span class="yt-play" aria-hidden="true">

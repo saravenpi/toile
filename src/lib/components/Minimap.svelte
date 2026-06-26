@@ -96,14 +96,27 @@
     jumpFromEvent(e, svg);
   }
 
+  function endDrag(e: PointerEvent): void {
+    if (!dragging) return;
+    dragging = false;
+    const svg = e.currentTarget as SVGSVGElement | null;
+    if (svg?.hasPointerCapture(e.pointerId)) svg.releasePointerCapture(e.pointerId);
+  }
+
   function onPointerMove(e: PointerEvent): void {
     if (!dragging) return;
+    // Recover from a missed pointerup (e.g. released outside the window). The
+    // pointer capture would otherwise keep routing EVERY move here and pan the
+    // camera "by itself" toward wherever the cursor is. Bail before jumping.
+    if (e.buttons === 0) {
+      endDrag(e);
+      return;
+    }
     jumpFromEvent(e, e.currentTarget as SVGSVGElement);
   }
 
   function onPointerUp(e: PointerEvent): void {
-    dragging = false;
-    (e.currentTarget as SVGSVGElement).releasePointerCapture(e.pointerId);
+    endDrag(e);
   }
 </script>
 
@@ -116,6 +129,7 @@
     onpointermove={onPointerMove}
     onpointerup={onPointerUp}
     onpointercancel={onPointerUp}
+    onlostpointercapture={() => (dragging = false)}
     role="presentation"
   >
     {#each notes as n (n.id)}
