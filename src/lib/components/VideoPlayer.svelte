@@ -103,7 +103,7 @@
     aria-hidden={!focused}
   >
     <button
-      class="ubtn"
+      class="ubtn liquid-glass"
       onclick={toggle}
       onpointerdown={(e) => e.stopPropagation()}
       aria-label={playing ? "Pause" : "Play"}
@@ -137,7 +137,7 @@
     position: relative;
     display: block;
     margin: 6px 0;
-    border-radius: 12px;
+    border-radius: 14px;
     overflow: hidden;
     font-size: 0;
     line-height: 0;
@@ -258,10 +258,8 @@
     height: 50px;
     display: grid;
     place-items: center;
-    border: none;
     border-radius: 50%;
-    background: var(--ink);
-    color: #fff;
+    color: var(--ink);
     cursor: pointer;
     transition: transform 0.16s var(--ease-soft);
   }

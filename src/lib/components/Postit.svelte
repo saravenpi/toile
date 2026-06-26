@@ -436,6 +436,11 @@
   .note.asset-only .note-img + .note-img {
     margin-top: 6px;
   }
+  .note.asset-only :global(.vplayer),
+  .note.asset-only :global(.note-audio),
+  .note.asset-only :global(.link) {
+    margin: 0;
+  }
 
   textarea {
     border: none;

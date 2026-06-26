@@ -43,6 +43,7 @@
   let editingId = $state<string | null>(null);
   let selectedIds = $state(new Set<string>());
   let selectedStrokeIds = $state(new Set<string>());
+  let overSel = $state(false);
   let dragId = $state<string | null>(null);
   let dragging = $state(false);
   let trashHot = $state(false);
@@ -84,6 +85,8 @@
       }
     return x0 === Infinity ? null : { x0, y0, x1, y1 };
   }
+
+  const selBBox = $derived.by(() => selectionBBox());
 
   let mode = $state<"normal" | "draw">("normal");
   let drawTool = $state<"pen" | "eraser">("pen");
@@ -782,7 +785,7 @@
       commitEdit();
       stopTween();
       const w = toWorld(e.clientX, e.clientY);
-      const bb = selectionBBox();
+      const bb = selBBox;
       if (bb && w.x >= bb.x0 && w.x <= bb.x1 && w.y >= bb.y0 && w.y <= bb.y1) {
         dragId = null;
         dragging = true;
@@ -880,6 +883,18 @@
         y: board.camera.y + (e.clientY - last.y),
       };
       last = { x: e.clientX, y: e.clientY };
+    } else if (
+      e.buttons === 0 &&
+      drawingPointer === null &&
+      erasePointer === null
+    ) {
+      const bb = selBBox;
+      if (bb) {
+        const w = toWorld(e.clientX, e.clientY);
+        overSel = w.x >= bb.x0 && w.x <= bb.x1 && w.y >= bb.y0 && w.y <= bb.y1;
+      } else if (overSel) {
+        overSel = false;
+      }
     }
   }
 
@@ -993,15 +1008,19 @@
       ww = r.width / board.camera.scale;
       wh = r.height / board.camera.scale;
     }
+    const bar = el.tagName === "VIDEO" ? 96 : 0;
     const margin = 0.84;
     const s = clamp(
-      Math.min((window.innerWidth * margin) / ww, (window.innerHeight * margin) / wh),
+      Math.min(
+        (window.innerWidth * margin) / ww,
+        (window.innerHeight * margin) / (wh + bar),
+      ),
       MIN_SCALE,
       MAX_SCALE,
     );
     animateCamera({
       x: window.innerWidth / 2 - cx * s,
-      y: window.innerHeight / 2 - cy * s,
+      y: window.innerHeight / 2 - (cy + bar / 2) * s,
       scale: s,
     });
   }
@@ -1280,11 +1299,7 @@
   const panStyle = $derived(
     `transform:translate(${board.camera.x}px,${board.camera.y}px);`,
   );
-  const worldStyle = $derived(
-    board.camera.scale >= 1
-      ? `zoom:${board.camera.scale};`
-      : `transform:scale(${board.camera.scale});`,
-  );
+  const worldStyle = $derived(`transform:scale(${board.camera.scale});`);
   const zoomPct = $derived(Math.round(board.camera.scale * 100));
   const spotlightId =$derived(focusedId ?? editingId);
   const menuAssetOnly = $derived(
@@ -1309,6 +1324,8 @@
 <main
   class="viewport"
   class:panning
+  class:moving={dragging}
+  class:grabsel={overSel && !dragging && !panning && !spaceHeld && mode === "normal"}
   class:space={spaceHeld && !panning}
   class:drawing={mode === "draw"}
   onwheel={onWheel}
@@ -1515,10 +1532,12 @@
     z-index: 0;
     pointer-events: none;
   }
-  .viewport.panning {
+  .viewport.panning,
+  .viewport.moving {
     cursor: grabbing;
   }
-  .viewport.space {
+  .viewport.space,
+  .viewport.grabsel {
     cursor: grab;
   }
   .viewport.drawing {
