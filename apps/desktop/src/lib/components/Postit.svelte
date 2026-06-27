@@ -122,18 +122,30 @@
   class:asset-only={cardOnly && !editing}
   class:text-note={textNote}
   data-note={note.id}
-  style="left:{note.x}px; top:{note.y}px; width:{note.w}px; height:{note.h}px; z-index:{note.z}; --bg:{note.color}; --family:{fontFamily}"
+  style="left:{note.x}px; top:{note.y}px; width:{note.w}px; height:{note.h}px; z-index:{note.z}; --bg:{note.color}; --family:{fontFamily}; --maxw:{note.w}px"
   in:scale={{ duration: 280, start: 0.82, opacity: 0, easing: cubicOut }}
   out:scale={{ duration: 200, start: 0.78, opacity: 0, easing: cubicOut }}
 >
   <div class="inner">
     {#if editing}
-      <textarea
-        bind:this={textarea}
-        bind:value={note.text}
-        placeholder="Write something…"
-        spellcheck="false"
-      ></textarea>
+      {#if textNote}
+        <div class="grow">
+          <div class="ghost" aria-hidden="true">{(note.text || "Write something…") + " "}</div>
+          <textarea
+            bind:this={textarea}
+            bind:value={note.text}
+            placeholder="Write something…"
+            spellcheck="false"
+          ></textarea>
+        </div>
+      {:else}
+        <textarea
+          bind:this={textarea}
+          bind:value={note.text}
+          placeholder="Write something…"
+          spellcheck="false"
+        ></textarea>
+      {/if}
     {:else}
       <!-- svelte-ignore a11y_click_events_have_key_events -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -240,10 +252,54 @@
     transform: none;
     box-shadow: none;
   }
+  .note.text-note.editing {
+    height: auto !important;
+  }
   .note.text-note.editing .inner {
-    transform: scale(1.015);
+    height: auto;
+    padding: 0;
+    overflow: visible;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .grow {
+    position: relative;
+    display: inline-block;
+    max-width: 100%;
+    padding: 14px 18px;
+    border-radius: 14px;
     background: rgba(255, 255, 255, 0.45);
     box-shadow: 0 10px 28px rgba(40, 38, 32, 0.14);
+    transform: scale(1.015);
+    transform-origin: top left;
+  }
+  .grow .ghost,
+  .grow > textarea {
+    margin: 0;
+    font-family: var(--family, inherit);
+    font-size: 19px;
+    line-height: 1.45;
+    font-weight: 500;
+    color: var(--ink);
+    white-space: pre-wrap;
+    word-break: normal;
+    overflow-wrap: break-word;
+  }
+  .grow .ghost {
+    padding: 0;
+    min-width: 1ch;
+    visibility: hidden;
+  }
+  .grow > textarea {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    padding: 14px 18px;
+    box-sizing: border-box;
+    overflow: hidden;
+    resize: none;
   }
 
 

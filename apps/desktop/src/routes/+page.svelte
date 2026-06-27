@@ -736,6 +736,7 @@
     }
 
     if (editingId) {
+      if (target.closest("[data-ui]")) return;
       if (noteEl?.dataset.note !== editingId) {
         exitEdit();
         clearSelection();
