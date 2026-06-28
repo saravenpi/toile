@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { fade } from "svelte/transition";
   import { listen } from "@tauri-apps/api/event";
-  import { readImage } from "@tauri-apps/plugin-clipboard-manager";
+  import { readImage, readText } from "@tauri-apps/plugin-clipboard-manager";
   import { openPath, openUrl } from "@tauri-apps/plugin-opener";
   import type { Image } from "@tauri-apps/api/image";
   import Postit from "$lib/components/Postit.svelte";
@@ -38,7 +38,7 @@
   import Cheatsheet from "$lib/components/Cheatsheet.svelte";
   import { assetKind, assetPath, isCardOnly } from "$lib/assets";
   import { links } from "$lib/links.svelte";
-  import { safeExternal, youtubeId } from "$lib/links";
+  import { safeExternal, youtubeId, isBareUrl } from "$lib/links";
 
   let trashEl = $state<HTMLDivElement | null>(null);
   let searchOpen = $state(false);
@@ -103,8 +103,11 @@
     y: number;
     wx: number;
     wy: number;
+    kind: "image" | "text";
+    label: string;
   } | null>(null);
   let pasteImage: Image | null = null;
+  let pasteText = "";
   let focusedId = $state<string | null>(null);
   let prevCamera: Camera | null = null;
   let editPrevCamera: Camera | null = null;
@@ -474,12 +477,27 @@
     }
   }
 
+  async function clipboardText(): Promise<string> {
+    try {
+      return (await readText())?.trim() ?? "";
+    } catch {
+      return "";
+    }
+  }
+
   async function pasteHere() {
     const img = pasteImage;
+    const text = pasteText;
     const at = pasteMenu;
     pasteMenu = null;
     pasteImage = null;
-    if (!img || !at) return;
+    pasteText = "";
+    if (!at) return;
+    if (at.kind === "text") {
+      if (text) selectOne(board.add(randomColor(), at.wx, at.wy, text).id);
+      return;
+    }
+    if (!img) return;
     const { width, height } = await img.size();
     const rgba = await img.rgba();
     const canvas = document.createElement("canvas");
@@ -512,18 +530,29 @@
         if (f) files.push(f);
       }
     }
-    if (!files.length) return;
-    e.preventDefault();
-    const ok = acceptable(files);
-    if (!ok.length) return;
-    const md = (await Promise.all(ok.map(storeAsset))).join("\n");
-    const editing = editingId && board.notes.find((n) => n.id === editingId);
-    if (editing) {
-      appendAssets(editing, md);
-    } else {
-      const c = viewCenterWorld();
-      board.add(randomColor(), c.x, c.y, md);
+    if (files.length) {
+      e.preventDefault();
+      const ok = acceptable(files);
+      if (!ok.length) return;
+      const md = (await Promise.all(ok.map(storeAsset))).join("\n");
+      const editing = editingId && board.notes.find((n) => n.id === editingId);
+      if (editing) {
+        appendAssets(editing, md);
+      } else {
+        const c = viewCenterWorld();
+        board.add(randomColor(), c.x, c.y, md);
+      }
+      return;
     }
+    // No files: drop pasted text as a new note. A pasted URL becomes a link or
+    // YouTube card via the segment parser. Skip while editing so the paste lands
+    // in the note's textarea natively.
+    if (editingId) return;
+    const text = e.clipboardData?.getData("text/plain")?.trim();
+    if (!text) return;
+    e.preventDefault();
+    const c = viewCenterWorld();
+    selectOne(board.add(randomColor(), c.x, c.y, text).id);
   }
 
   function onDragOver(e: DragEvent) {
@@ -569,13 +598,21 @@
       const cy = e.clientY;
       const world = toWorld(cx, cy);
       const img = await clipboardImage();
-      if (!img) return;
+      const text = img ? "" : await clipboardText();
+      if (!img && !text) return;
       pasteImage = img;
+      pasteText = text;
       pasteMenu = {
         x: Math.min(cx, window.innerWidth - 168),
         y: Math.min(cy, window.innerHeight - 54),
         wx: world.x,
         wy: world.y,
+        kind: img ? "image" : "text",
+        label: img
+          ? "Paste image"
+          : isBareUrl(text)
+            ? "Paste link"
+            : "Paste text",
       };
       return;
     }
@@ -1339,10 +1376,12 @@
   <PasteMenu
     x={pasteMenu.x}
     y={pasteMenu.y}
+    label={pasteMenu.label}
     onpaste={pasteHere}
     onclose={() => {
       pasteMenu = null;
       pasteImage = null;
+      pasteText = "";
     }}
   />
 {/if}

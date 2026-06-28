@@ -114,13 +114,13 @@ fn valid_video_id(id: &str) -> bool {
 }
 
 fn yt_embed_page(id: &str) -> String {
-    // The iframe keeps its native 16:9 ratio but is scaled to *cover* the card
-    // (like `object-fit: cover`): sized to 100vw / 100vh on whichever axis is
-    // larger, centred, with the overflow clipped. A 16:9 video then fills a card
-    // of any shape, and centred non-16:9 content (e.g. square album art on a
-    // black 16:9 frame) fills a card the user has dragged to match it.
+    // Standard responsive fill: the iframe exactly fills its container so the
+    // YouTube player lays out at the card's size and its chrome is never cropped.
+    // Viewport-unit "cover" tricks are deliberately avoided: under the board's
+    // CSS `zoom` the iframe viewport changes, which made vw/vh + min-width/height
+    // flip cover modes and the player jump around. The card owns the aspect ratio.
     format!(
-        "<!doctype html><html><head><meta charset=\"utf-8\"><style>html,body{{margin:0;width:100%;height:100%;background:#000;overflow:hidden}}iframe{{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:100vw;height:56.25vw;min-width:177.78vh;min-height:100vh;border:0;display:block}}</style></head><body><iframe src=\"https://www.youtube-nocookie.com/embed/{}?autoplay=1&rel=0&playsinline=1\" allow=\"accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen\" referrerpolicy=\"strict-origin-when-cross-origin\" allowfullscreen></iframe></body></html>",
+        "<!doctype html><html><head><meta charset=\"utf-8\"><style>html,body{{margin:0;width:100%;height:100%;background:#000;overflow:hidden}}iframe{{position:absolute;inset:0;width:100%;height:100%;border:0;display:block}}</style></head><body><iframe src=\"https://www.youtube-nocookie.com/embed/{}?autoplay=1&rel=0&playsinline=1\" allow=\"accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen\" referrerpolicy=\"strict-origin-when-cross-origin\" allowfullscreen></iframe></body></html>",
         id
     )
 }
