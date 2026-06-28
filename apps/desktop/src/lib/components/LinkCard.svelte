@@ -5,7 +5,7 @@
   import { links } from "../links.svelte";
   import { youtubeId, safeExternal, hostOf } from "../links";
 
-  let { url, width = 0 }: { url: string; width?: number } = $props();
+  let { url }: { url: string } = $props();
 
   const vid = $derived(youtubeId(url));
 
@@ -19,10 +19,6 @@
   const host = $derived(hostOf(url));
 
   let playing = $state(false);
-
-  const frameStyle = $derived(
-    width ? `width:${width}px;height:${Math.round((width * 9) / 16)}px;` : "",
-  );
 
   $effect(() => {
     void url;
@@ -64,7 +60,6 @@
     {#if playing && ytSrc}
       <iframe
         class="yt-frame"
-        style={frameStyle}
         src={ytSrc}
         title={title || "YouTube video"}
         allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
@@ -124,7 +119,7 @@
   .yt {
     position: relative;
     aspect-ratio: 16 / 9;
-    border-radius: 14px;
+    border-radius: 0;
     overflow: hidden;
     background: #000;
     box-shadow: inset 0 0 0 1px rgba(40, 38, 32, 0.12);

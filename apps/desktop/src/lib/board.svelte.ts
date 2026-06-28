@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { translatePath } from "./draw";
+import { youtubeId } from "./links";
 
 export type Note = {
   id: string;
@@ -10,10 +11,13 @@ export type Note = {
   color: string;
   text: string;
   font?: FontKey;
+  size?: number;
   z: number;
 };
 
 export type FontKey = "sans" | "serif" | "mono";
+
+export const TEXT_SIZE = { min: 12, max: 80, default: 19 } as const;
 
 export type Stroke = { id: string; color: string; width: number; d: string };
 
@@ -22,6 +26,18 @@ type UndoOp =
   | { kind: "strokeErase"; strokes: Stroke[] }
   | { kind: "noteAdd"; notes: Note[] }
   | { kind: "noteDelete"; notes: Note[] }
+  | {
+      kind: "resize";
+      id: string;
+      fromW: number;
+      toW: number;
+      fromH: number;
+      toH: number;
+      fromX: number;
+      toX: number;
+      fromY: number;
+      toY: number;
+    }
   | {
       kind: "move";
       noteIds: string[];
@@ -44,7 +60,11 @@ export const COLORS = [
 ];
 
 export const NOTE_SIZE = 224;
-export const MIN_SCALE = 0.2;
+export const TEXT_WIDTH = 260;
+export const MEDIA_WIDTH = 380;
+
+const ASSET_LIKE = /^\s*(?:!?\[[^\]]*\]\([^)]*\)|https?:\/\/\S+)\s*$/;
+export const MIN_SCALE = 0.05;
 export const MAX_SCALE = 3;
 
 const CAMERA_KEY = "toile.camera.v1";
@@ -91,12 +111,19 @@ class Board {
   }
 
   add(color: string, worldX: number, worldY: number, text = "", font?: FontKey): Note {
+    const w =
+      color === TEXT_COLOR
+        ? TEXT_WIDTH
+        : ASSET_LIKE.test(text)
+          ? MEDIA_WIDTH
+          : NOTE_SIZE;
+    const h = youtubeId(text) ? Math.round((w * 9) / 16) : NOTE_SIZE;
     const note: Note = {
       id: uid(),
-      x: worldX - NOTE_SIZE / 2,
-      y: worldY - NOTE_SIZE / 2,
-      w: NOTE_SIZE,
-      h: NOTE_SIZE,
+      x: worldX - w / 2,
+      y: worldY - h / 2,
+      w,
+      h,
       color,
       text,
       font,
@@ -139,6 +166,32 @@ class Board {
   pushMove(noteIds: string[], strokeIds: string[], dx: number, dy: number): void {
     if ((!dx && !dy) || (!noteIds.length && !strokeIds.length)) return;
     this.#push({ kind: "move", noteIds, strokeIds, dx, dy });
+  }
+
+  pushResize(
+    id: string,
+    fromW: number,
+    toW: number,
+    fromH: number,
+    toH: number,
+    fromX: number,
+    toX: number,
+    fromY: number,
+    toY: number,
+  ): void {
+    if (fromW === toW && fromH === toH && fromX === toX && fromY === toY) return;
+    this.#push({
+      kind: "resize",
+      id,
+      fromW,
+      toW,
+      fromH,
+      toH,
+      fromX,
+      toX,
+      fromY,
+      toY,
+    });
   }
 
   deleteNotes(ids: Set<string>): void {
@@ -197,6 +250,16 @@ class Board {
       case "noteDelete":
         forward ? this.#dropNotes(op.notes) : this.#addNotes(op.notes);
         break;
+      case "resize": {
+        const n = this.notes.find((x) => x.id === op.id);
+        if (n) {
+          n.w = forward ? op.toW : op.fromW;
+          n.h = forward ? op.toH : op.fromH;
+          n.x = forward ? op.toX : op.fromX;
+          n.y = forward ? op.toY : op.fromY;
+        }
+        break;
+      }
       case "move": {
         const sign = forward ? 1 : -1;
         const dx = op.dx * sign;

@@ -6,6 +6,8 @@
   import { openPath, openUrl } from "@tauri-apps/plugin-opener";
   import type { Image } from "@tauri-apps/api/image";
   import Postit from "$lib/components/Postit.svelte";
+  import TextBlock from "$lib/components/TextBlock.svelte";
+  import Grid from "$lib/components/Grid.svelte";
   import Palette from "$lib/components/Palette.svelte";
   import AttachButton from "$lib/components/AttachButton.svelte";
   import ZoomControls from "$lib/components/ZoomControls.svelte";
@@ -13,6 +15,7 @@
   import SearchPalette from "$lib/components/SearchPalette.svelte";
   import CircleButton from "$lib/components/CircleButton.svelte";
   import FontControls from "$lib/components/FontControls.svelte";
+  import SizeControls from "$lib/components/SizeControls.svelte";
   import DrawControls from "$lib/components/DrawControls.svelte";
   import DrawLayer from "$lib/components/DrawLayer.svelte";
   import Trash from "$lib/components/Trash.svelte";
@@ -24,18 +27,18 @@
     MIN_SCALE,
     MAX_SCALE,
     TEXT_COLOR,
+    TEXT_SIZE,
     type Note,
     type Camera,
     type FontKey,
   } from "$lib/board.svelte";
-  import { smoothPath, simplify, pathBBox } from "$lib/draw";
+  import { pathBBox } from "$lib/draw";
+  import { draw } from "$lib/drawing.svelte";
   import UndoRedo from "$lib/components/UndoRedo.svelte";
   import Cheatsheet from "$lib/components/Cheatsheet.svelte";
   import { assetKind, assetPath, isCardOnly } from "$lib/assets";
   import { links } from "$lib/links.svelte";
-  import { safeExternal } from "$lib/links";
-
-  const GRID = 26;
+  import { safeExternal, youtubeId } from "$lib/links";
 
   let trashEl = $state<HTMLDivElement | null>(null);
   let searchOpen = $state(false);
@@ -88,15 +91,6 @@
 
   const selBBox = $derived.by(() => selectionBBox());
 
-  let mode = $state<"normal" | "draw">("normal");
-  let drawTool = $state<"pen" | "eraser">("pen");
-  let drawColor = $state("#43413b");
-  let drawWidth = $state(5);
-  let liveStroke = $state<{ x: number; y: number }[]>([]);
-  let drawingPointer: number | null = null;
-  let erasePointer: number | null = null;
-  let eraseMarks = $state(new Set<string>());
-  let eraseLast: { x: number; y: number } | null = null;
 
   let pressId: string | null = null;
   let pressTarget: HTMLElement | null = null;
@@ -195,131 +189,19 @@
   function setEditingFont(f: FontKey) {
     if (editingNote) editingNote.font = f;
   }
+  const editingSize = $derived(editingNote?.size ?? TEXT_SIZE.default);
+  function setEditingSize(s: number) {
+    if (editingNote) editingNote.size = s;
+  }
 
   function enterDraw() {
     commitEdit();
     clearSelection();
     menu = null;
-    mode = "draw";
+    draw.enter();
   }
   function exitDraw() {
-    mode = "normal";
-    cancelStroke();
-    cancelErase();
-  }
-
-  function startStroke(e: PointerEvent) {
-    drawingPointer = e.pointerId;
-    const w = toWorld(e.clientX, e.clientY);
-    liveStroke = [{ x: w.x, y: w.y }];
-  }
-  function extendStroke(e: PointerEvent) {
-    const evs = e.getCoalescedEvents?.() ?? [e];
-    for (const ev of evs) {
-      const w = toWorld(ev.clientX, ev.clientY);
-      liveStroke.push({ x: w.x, y: w.y });
-    }
-  }
-  function finishStroke() {
-    drawingPointer = null;
-    if (liveStroke.length) {
-      const width = drawWidth / board.camera.scale;
-      board.addStroke(smoothPath(simplify(liveStroke)), drawColor, width);
-    }
-    liveStroke = [];
-  }
-  function cancelStroke() {
-    drawingPointer = null;
-    liveStroke = [];
-  }
-
-  type EraseCand = { id: string; el: SVGPathElement; bb: DOMRect; hw: number };
-  let eraseCands: EraseCand[] = [];
-
-  function startErase(e: PointerEvent) {
-    erasePointer = e.pointerId;
-    eraseMarks = new Set();
-    eraseCands = [];
-    const layer = document.querySelector(".draw-layer");
-    if (layer) {
-      for (const el of layer.querySelectorAll<SVGPathElement>(
-        "path[data-stroke-id]",
-      )) {
-        try {
-          eraseCands.push({
-            id: el.dataset.strokeId!,
-            el,
-            bb: el.getBBox(),
-            hw: parseFloat(el.getAttribute("stroke-width") ?? "0") / 2,
-          });
-        } catch {}
-      }
-    }
-    const w = toWorld(e.clientX, e.clientY);
-    eraseLast = w;
-    markErase(w.x, w.y);
-  }
-
-  function extendErase(e: PointerEvent) {
-    const evs = e.getCoalescedEvents?.() ?? [e];
-    for (const ev of evs) {
-      const w = toWorld(ev.clientX, ev.clientY);
-      if (eraseLast) {
-        const dx = w.x - eraseLast.x;
-        const dy = w.y - eraseLast.y;
-        const step = 6 / board.camera.scale;
-        const n = Math.min(48, Math.floor(Math.hypot(dx, dy) / step));
-        for (let i = 1; i <= n; i++)
-          markErase(eraseLast.x + (dx * i) / n, eraseLast.y + (dy * i) / n);
-      }
-      markErase(w.x, w.y);
-      eraseLast = w;
-    }
-  }
-
-  function markErase(wx: number, wy: number) {
-    const margin = 12 / board.camera.scale;
-    let changed = false;
-    for (const c of eraseCands) {
-      if (eraseMarks.has(c.id)) continue;
-      const m = margin + c.hw;
-      if (
-        wx < c.bb.x - m ||
-        wx > c.bb.x + c.bb.width + m ||
-        wy < c.bb.y - m ||
-        wy > c.bb.y + c.bb.height + m
-      )
-        continue;
-      if (hitsStroke(c.el, wx, wy, margin)) {
-        eraseMarks.add(c.id);
-        changed = true;
-      }
-    }
-    if (changed) eraseMarks = new Set(eraseMarks);
-  }
-
-  function hitsStroke(el: SVGPathElement, wx: number, wy: number, r: number) {
-    if (el.isPointInStroke(new DOMPoint(wx, wy))) return true;
-    for (let i = 0; i < 8; i++) {
-      const a = (i / 8) * Math.PI * 2;
-      if (el.isPointInStroke(new DOMPoint(wx + Math.cos(a) * r, wy + Math.sin(a) * r)))
-        return true;
-    }
-    return false;
-  }
-
-  function finishErase() {
-    erasePointer = null;
-    eraseLast = null;
-    if (eraseMarks.size) board.commitErase(board.removeStrokes(eraseMarks));
-    eraseMarks = new Set();
-    eraseCands = [];
-  }
-  function cancelErase() {
-    erasePointer = null;
-    eraseLast = null;
-    eraseMarks = new Set();
-    eraseCands = [];
+    draw.exit();
   }
 
   function focusNote(note: Note) {
@@ -340,21 +222,33 @@
     });
   }
 
-  function discardEmptyText(id: string | null) {
+  function discardEmptyNote(id: string | null) {
     if (!id) return;
     const n = board.notes.find((x) => x.id === id);
-    if (n && n.color === TEXT_COLOR && n.text.trim() === "") board.remove(id);
+    if (n && n.text.trim() === "") board.remove(id);
   }
 
   function commitEdit() {
-    discardEmptyText(editingId);
+    sizeYoutubeNote(editingId);
+    discardEmptyNote(editingId);
     editingId = null;
     editPrevCamera = null;
   }
 
+  // A YouTube card resizes freely, so it needs a real height. Give a freshly
+  // typed link a 16:9 box on commit; the `w === h` guard means it only touches
+  // an untouched square default, never a card the user has already shaped.
+  function sizeYoutubeNote(id: string | null) {
+    if (!id) return;
+    const n = board.notes.find((x) => x.id === id);
+    if (n && n.w === n.h && youtubeId(n.text.trim())) {
+      n.h = Math.round((n.w * 9) / 16);
+    }
+  }
+
   function exitEdit() {
     if (editingId === null) return;
-    discardEmptyText(editingId);
+    discardEmptyNote(editingId);
     const back = editPrevCamera;
     editingId = null;
     editPrevCamera = null;
@@ -382,11 +276,29 @@
       minY = Infinity,
       maxX = -Infinity,
       maxY = -Infinity;
-    for (const n of board.notes) {
-      if (n.x < minX) minX = n.x;
-      if (n.y < minY) minY = n.y;
-      if (n.x + n.w > maxX) maxX = n.x + n.w;
-      if (n.y + n.h > maxY) maxY = n.y + n.h;
+    // Measure actual rendered note bounds from the DOM so fit is correct even
+    // if a note's stored height hasn't synced yet (auto-height media/text).
+    const els = document.querySelectorAll<HTMLElement>("[data-note]");
+    if (els.length) {
+      const { x: cx, y: cy, scale } = board.camera;
+      for (const el of els) {
+        const r = el.getBoundingClientRect();
+        const x0 = (r.left - cx) / scale;
+        const y0 = (r.top - cy) / scale;
+        const x1 = (r.right - cx) / scale;
+        const y1 = (r.bottom - cy) / scale;
+        if (x0 < minX) minX = x0;
+        if (y0 < minY) minY = y0;
+        if (x1 > maxX) maxX = x1;
+        if (y1 > maxY) maxY = y1;
+      }
+    } else {
+      for (const n of board.notes) {
+        if (n.x < minX) minX = n.x;
+        if (n.y < minY) minY = n.y;
+        if (n.x + n.w > maxX) maxX = n.x + n.w;
+        if (n.y + n.h > maxY) maxY = n.y + n.h;
+      }
     }
     const layer = document.querySelector(".draw-layer");
     if (layer) {
@@ -459,7 +371,7 @@
   }
 
   function openSearch() {
-    if (mode === "draw") exitDraw();
+    if (draw.mode === "draw") exitDraw();
     commitEdit();
     menu = null;
     pasteMenu = null;
@@ -723,10 +635,10 @@
 
     if (target.closest("[data-interactive]")) return;
 
-    if (mode === "draw") {
+    if (draw.mode === "draw") {
       if (target.closest("[data-ui]")) return;
-      if (drawTool === "eraser") startErase(e);
-      else startStroke(e);
+      if (draw.tool === "eraser") draw.startErase(e);
+      else draw.startStroke(e);
       return;
     }
 
@@ -807,20 +719,20 @@
   }
 
   function onPointerMove(e: PointerEvent) {
-    if (drawingPointer !== null) {
+    if (draw.drawing) {
       if (e.buttons === 0) {
-        finishStroke();
+        draw.finishStroke();
         return;
       }
-      extendStroke(e);
+      draw.extendStroke(e);
       return;
     }
-    if (erasePointer !== null) {
+    if (draw.erasing) {
       if (e.buttons === 0) {
-        finishErase();
+        draw.finishErase();
         return;
       }
-      extendErase(e);
+      draw.extendErase(e);
       return;
     }
     if (
@@ -886,8 +798,8 @@
       last = { x: e.clientX, y: e.clientY };
     } else if (
       e.buttons === 0 &&
-      drawingPointer === null &&
-      erasePointer === null
+      !draw.drawing &&
+      !draw.erasing
     ) {
       const bb = selBBox;
       if (bb) {
@@ -914,12 +826,12 @@
   }
 
   function onPointerUp() {
-    if (drawingPointer !== null) {
-      finishStroke();
+    if (draw.drawing) {
+      draw.finishStroke();
       return;
     }
-    if (erasePointer !== null) {
-      finishErase();
+    if (draw.erasing) {
+      draw.finishErase();
       return;
     }
     const dragging = dragNotes.length > 0 || dragStrokeIds.length > 0;
@@ -1091,7 +1003,7 @@
       (e.key === "Backspace" || e.key === "Delete") &&
       editingId === null &&
       focusedId === null &&
-      mode === "normal" &&
+      draw.mode === "normal" &&
       (selectedIds.size || selectedStrokeIds.size)
     ) {
       e.preventDefault();
@@ -1115,11 +1027,11 @@
       }
       if (!e.repeat && (e.key === "d" || e.key === "D")) {
         e.preventDefault();
-        if (mode === "draw") exitDraw();
+        if (draw.mode === "draw") exitDraw();
         else enterDraw();
         return;
       }
-      if (!e.repeat && mode === "normal") {
+      if (!e.repeat && draw.mode === "normal") {
         if (e.key === "t" || e.key === "T") {
           e.preventDefault();
           addTextNote();
@@ -1138,11 +1050,11 @@
         }
       }
     }
-    if (mode === "draw") {
+    if (draw.mode === "draw") {
       if (e.key === "Escape") {
-        if (erasePointer !== null || drawingPointer !== null) {
-          cancelErase();
-          cancelStroke();
+        if (draw.erasing || draw.drawing) {
+          draw.cancelErase();
+          draw.cancelStroke();
         } else {
           exitDraw();
         }
@@ -1226,76 +1138,6 @@
     }, 300);
   });
 
-  let gridCanvas =$state<HTMLCanvasElement | null>(null);
-  let gridCtx: CanvasRenderingContext2D | null = null;
-  let dotTile: HTMLCanvasElement | null = null;
-  let dotPattern: CanvasPattern | null = null;
-  let dpr = 1;
-
-  function buildDotTile() {
-    const size = Math.max(1, Math.round(GRID * dpr));
-    const c = document.createElement("canvas");
-    c.width = size;
-    c.height = size;
-    const g = c.getContext("2d")!;
-    const r = 1.4 * dpr;
-    const cx = size / 2;
-    const grad = g.createRadialGradient(cx, cx, 0, cx, cx, r + dpr);
-    grad.addColorStop(0, "rgba(40, 38, 32, 0.13)");
-    grad.addColorStop(r / (r + dpr), "rgba(40, 38, 32, 0.13)");
-    grad.addColorStop(1, "rgba(40, 38, 32, 0)");
-    g.fillStyle = grad;
-    g.beginPath();
-    g.arc(cx, cx, r + dpr, 0, Math.PI * 2);
-    g.fill();
-    dotTile = c;
-    dotPattern = null;
-  }
-
-  function resizeGrid() {
-    if (!gridCanvas) return;
-    dpr = window.devicePixelRatio || 1;
-    gridCanvas.width = Math.round(window.innerWidth * dpr);
-    gridCanvas.height = Math.round(window.innerHeight * dpr);
-    gridCanvas.style.width = window.innerWidth + "px";
-    gridCanvas.style.height = window.innerHeight + "px";
-    gridCtx = gridCanvas.getContext("2d");
-    buildDotTile();
-    drawGrid();
-  }
-
-  function drawGrid() {
-    const ctx = gridCtx;
-    if (!ctx || !gridCanvas || !dotTile) return;
-    if (!dotPattern) dotPattern = ctx.createPattern(dotTile, "repeat");
-    if (!dotPattern) return;
-    const w = gridCanvas.width;
-    const h = gridCanvas.height;
-    const s = board.camera.scale;
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, w, h);
-    ctx.setTransform(s, 0, 0, s, board.camera.x * dpr, board.camera.y * dpr);
-    ctx.fillStyle = dotPattern;
-    ctx.fillRect(
-      (-board.camera.x * dpr) / s,
-      (-board.camera.y * dpr) / s,
-      w / s,
-      h / s,
-    );
-  }
-
-  $effect(() => {
-    board.camera.x;
-    board.camera.y;
-    board.camera.scale;
-    if (gridCanvas) drawGrid();
-  });
-
-  onMount(() => {
-    resizeGrid();
-    window.addEventListener("resize", resizeGrid);
-    return () => window.removeEventListener("resize", resizeGrid);
-  });
 
   const panStyle = $derived(
     `transform:translate(${board.camera.x}px,${board.camera.y}px);`,
@@ -1307,10 +1149,12 @@
   );
   const zoomPct = $derived(Math.round(board.camera.scale * 100));
   const spotlightId =$derived(focusedId ?? editingId);
-  const menuAssetOnly = $derived(
-    !!menu &&
-      isCardOnly(board.notes.find((n) => n.id === menu!.id)?.text ?? ""),
-  );
+  const menuShowColors = $derived.by(() => {
+    const m = menu;
+    if (!m) return false;
+    const note = board.notes.find((n) => n.id === m.id);
+    return !!note && note.color !== TEXT_COLOR && !isCardOnly(note.text);
+  });
 </script>
 
 <svelte:window
@@ -1330,38 +1174,50 @@
   class="viewport"
   class:panning
   class:moving={dragging}
-  class:grabsel={overSel && !dragging && !panning && !spaceHeld && mode === "normal"}
+  class:grabsel={overSel && !dragging && !panning && !spaceHeld && draw.mode === "normal"}
   class:space={spaceHeld && !panning}
-  class:drawing={mode === "draw"}
+  class:drawing={draw.mode === "draw"}
   onwheel={onWheel}
   onpointerdown={onPointerDown}
   oncontextmenu={onContextMenu}
   ondragover={onDragOver}
   ondrop={onDrop}
 >
-  <canvas bind:this={gridCanvas} class="grid"></canvas>
+  <Grid />
   {#if spotlightId !== null}
     <div class="dim" transition:fade={{ duration: 300 }}></div>
   {/if}
   <div class="pan" style={panStyle}>
     <div class="world" style={worldStyle}>
       <DrawLayer
-        live={liveStroke}
-        liveColor={drawColor}
-        liveWidth={drawWidth / board.camera.scale}
-        marks={eraseMarks}
+        live={draw.live}
+        liveColor={draw.color}
+        liveWidth={draw.width / board.camera.scale}
+        marks={draw.marks}
         selected={selectedStrokeIds}
       />
       {#each board.notes as note (note.id)}
-        <Postit
-          {note}
-          editing={editingId === note.id}
-          selected={selectedIds.has(note.id) && focusedId !== note.id}
-          dragging={dragId === note.id}
-          doomed={dragId === note.id && trashHot}
-          dimmed={spotlightId !== null && spotlightId !== note.id}
-          focused={focusedId === note.id}
-        />
+        {#if note.color === TEXT_COLOR}
+          <TextBlock
+            {note}
+            editing={editingId === note.id}
+            selected={selectedIds.has(note.id) && focusedId !== note.id}
+            dragging={dragId === note.id}
+            doomed={dragId === note.id && trashHot}
+            dimmed={spotlightId !== null && spotlightId !== note.id}
+            focused={focusedId === note.id}
+          />
+        {:else}
+          <Postit
+            {note}
+            editing={editingId === note.id}
+            selected={selectedIds.has(note.id) && focusedId !== note.id}
+            dragging={dragId === note.id}
+            doomed={dragId === note.id && trashHot}
+            dimmed={spotlightId !== null && spotlightId !== note.id}
+            focused={focusedId === note.id}
+          />
+        {/if}
       {/each}
     </div>
   </div>
@@ -1388,26 +1244,26 @@
   <Trash bind:el={trashEl} hot={trashHot} armed={dragging} />
 
   <div class="dock" class:concealed={focusedId !== null} data-ui>
-    {#if mode === "draw"}
-      <CircleButton title="Pen" active={drawTool === "pen"} onclick={() => (drawTool = "pen")}>
+    {#if draw.mode === "draw"}
+      <CircleButton title="Pen" active={draw.tool === "pen"} onclick={() => (draw.tool = "pen")}>
         <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M12 20h9" />
           <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
         </svg>
       </CircleButton>
-      <CircleButton title="Eraser" active={drawTool === "eraser"} onclick={() => (drawTool = "eraser")}>
+      <CircleButton title="Eraser" active={draw.tool === "eraser"} onclick={() => (draw.tool = "eraser")}>
         <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="m7 21-4.3-4.3a1.7 1.7 0 0 1 0-2.4l9.6-9.6a1.7 1.7 0 0 1 2.4 0l5.3 5.3a1.7 1.7 0 0 1 0 2.4L13 21" />
           <path d="M22 21H8" />
           <path d="m5.5 11.5 6 6" />
         </svg>
       </CircleButton>
-      {#if drawTool === "pen"}
+      {#if draw.tool === "pen"}
         <DrawControls
-          color={drawColor}
-          width={drawWidth}
-          oncolor={(c) => (drawColor = c)}
-          onwidth={(w) => (drawWidth = w)}
+          color={draw.color}
+          width={draw.width}
+          oncolor={(c) => (draw.color = c)}
+          onwidth={(w) => (draw.width = w)}
         />
       {/if}
       <CircleButton title="Done" kbd="Esc" onclick={exitDraw}>
@@ -1417,6 +1273,7 @@
       </CircleButton>
     {:else if editingTextNote}
       <FontControls font={editingFont} onpick={setEditingFont} />
+      <SizeControls size={editingSize} onpick={setEditingSize} />
     {:else}
       <Palette colors={COLORS} onpick={addNote} />
       <CircleButton title="Add text" kbd="T" onclick={addTextNote}>
@@ -1471,7 +1328,7 @@
     x={menu.x}
     y={menu.y}
     colors={COLORS}
-    showColors={!menuAssetOnly}
+    showColors={menuShowColors}
     oncolor={(c) => setColor(menu!.id, c)}
     ondelete={() => deleteFromMenu(menu!.id)}
     onclose={() => (menu = null)}
@@ -1528,14 +1385,6 @@
     overflow: hidden;
     background-color: var(--paper);
     cursor: default;
-  }
-  .grid {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    z-index: 0;
-    pointer-events: none;
   }
   .viewport.panning,
   .viewport.moving {

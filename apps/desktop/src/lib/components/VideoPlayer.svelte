@@ -137,11 +137,14 @@
     position: relative;
     display: block;
     margin: 6px 0;
-    border-radius: 14px;
+    border-radius: 0;
     overflow: hidden;
     font-size: 0;
     line-height: 0;
     cursor: inherit;
+    /* Lets the fullscreen controls size relative to the video, so they stay a
+       consistent on-screen size whether the video is small or huge. */
+    container-type: inline-size;
   }
   .note-media {
     display: block;
@@ -227,13 +230,14 @@
     pointer-events: none;
   }
 
+  /* Fullscreen controls scale with the video width (cqw) so they stay a sane
+     on-screen size at any video size, with px floors/ceilings for sanity. */
   .under-bar {
     display: flex;
     align-items: center;
-    gap: 14px;
+    gap: clamp(8px, 2cqw, 28px);
     max-height: 0;
-    padding: 0 6px;
-    font-size: 14px;
+    padding: 0 clamp(4px, 1cqw, 14px);
     line-height: normal;
     opacity: 0;
     transform: translateY(10px);
@@ -246,16 +250,16 @@
       transform 0.34s var(--ease-soft);
   }
   .under-bar.open {
-    max-height: 78px;
-    padding: 12px 8px 8px;
+    max-height: clamp(60px, 12cqw, 200px);
+    padding: clamp(10px, 2cqw, 28px) clamp(6px, 1.4cqw, 20px) clamp(8px, 1.6cqw, 22px);
     opacity: 1;
     transform: translateY(0);
     pointer-events: auto;
   }
   .ubtn {
     flex: 0 0 auto;
-    width: 50px;
-    height: 50px;
+    width: clamp(44px, 7cqw, 120px);
+    height: clamp(44px, 7cqw, 120px);
     display: grid;
     place-items: center;
     border-radius: 50%;
@@ -263,8 +267,12 @@
     cursor: pointer;
     transition: transform 0.16s var(--ease-soft);
   }
+  .ubtn svg {
+    width: 44%;
+    height: 44%;
+  }
   .ubtn .tri {
-    margin-left: 1.5px;
+    margin-left: 3%;
   }
   .ubtn:hover {
     transform: scale(1.07);
@@ -275,6 +283,17 @@
   .uwave {
     flex: 1 1 auto;
     min-width: 0;
+  }
+  .uwave :global(.bar) {
+    height: clamp(26px, 4cqw, 68px);
+  }
+  .uwave :global(.track) {
+    height: clamp(3px, 0.5cqw, 8px);
+  }
+  .uwave :global(.thumb) {
+    width: clamp(11px, 1.8cqw, 30px);
+    height: clamp(11px, 1.8cqw, 30px);
+    margin: calc(clamp(11px, 1.8cqw, 30px) / -2) 0 0 calc(clamp(11px, 1.8cqw, 30px) / -2);
   }
 
   @media (prefers-reduced-motion: reduce) {

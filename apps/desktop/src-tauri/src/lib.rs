@@ -36,6 +36,8 @@ struct Note {
     text: String,
     #[serde(default)]
     font: Option<String>,
+    #[serde(default)]
+    size: Option<f64>,
 }
 
 #[derive(Serialize)]
@@ -48,6 +50,8 @@ struct FrontMatter {
     z: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     font: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    size: Option<f64>,
 }
 
 #[derive(Deserialize, Default)]
@@ -59,6 +63,7 @@ struct PartialFm {
     color: Option<String>,
     z: Option<f64>,
     font: Option<String>,
+    size: Option<f64>,
 }
 
 #[derive(Serialize)]
@@ -109,8 +114,13 @@ fn valid_video_id(id: &str) -> bool {
 }
 
 fn yt_embed_page(id: &str) -> String {
+    // The iframe keeps its native 16:9 ratio but is scaled to *cover* the card
+    // (like `object-fit: cover`): sized to 100vw / 100vh on whichever axis is
+    // larger, centred, with the overflow clipped. A 16:9 video then fills a card
+    // of any shape, and centred non-16:9 content (e.g. square album art on a
+    // black 16:9 frame) fills a card the user has dragged to match it.
     format!(
-        "<!doctype html><html><head><meta charset=\"utf-8\"><style>html,body{{margin:0;height:100%;background:#000;overflow:hidden}}iframe{{border:0;width:100%;height:100%;display:block}}</style></head><body><iframe src=\"https://www.youtube-nocookie.com/embed/{}?autoplay=1&rel=0&playsinline=1\" allow=\"accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen\" referrerpolicy=\"strict-origin-when-cross-origin\" allowfullscreen></iframe></body></html>",
+        "<!doctype html><html><head><meta charset=\"utf-8\"><style>html,body{{margin:0;width:100%;height:100%;background:#000;overflow:hidden}}iframe{{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:100vw;height:56.25vw;min-width:177.78vh;min-height:100vh;border:0;display:block}}</style></head><body><iframe src=\"https://www.youtube-nocookie.com/embed/{}?autoplay=1&rel=0&playsinline=1\" allow=\"accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen\" referrerpolicy=\"strict-origin-when-cross-origin\" allowfullscreen></iframe></body></html>",
         id
     )
 }
@@ -239,6 +249,7 @@ fn note_to_md(n: &Note) -> String {
         color: n.color.clone(),
         z: n.z,
         font: n.font.clone(),
+        size: n.size,
     };
     let yaml = serde_yaml::to_string(&fm).unwrap_or_default();
     format!("---\n{}---\n{}\n", yaml, n.text)
@@ -295,6 +306,7 @@ fn build_note(id: String, fm: PartialFm, body: String, state: &SyncState) -> Not
         z,
         text: body,
         font: fm.font,
+        size: fm.size,
     }
 }
 

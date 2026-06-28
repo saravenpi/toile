@@ -39,9 +39,6 @@
   const fontSize = $derived(note.size ?? TEXT_SIZE.default);
   const segments = $derived(parseSegments(note.text));
   const mediaAspect = $derived(lockedAspect(note, segments));
-  // YouTube cards resize freely in 2D and keep their stored height, so they get
-  // a real box (not the content-driven auto-height of other card-only notes).
-  const mediaBox = $derived(mediaAspect === "free");
 
   function onToggle(e: Event) {
     const box = e.target as HTMLElement;
@@ -70,30 +67,32 @@
 </script>
 
 <div
-  class="note"
+  class="note text-note"
+  class:asset-only={cardOnly && !editing}
+  class:square={mediaAspect !== null && !editing}
   class:editing
   class:selected={selected && !editing}
   class:dragging
   class:doomed
   class:dimmed
   class:focused
-  class:asset-only={cardOnly && !editing}
-  class:media-box={mediaBox && !editing}
-  class:square={mediaAspect !== null && !editing}
   data-note={note.id}
-  style="left:{note.x}px; top:{note.y}px; width:{note.w}px; height:{note.h}px; z-index:{note.z}; --bg:{note.color}; --family:{fontFamily}; --size:{fontSize}px; --maxw:{note.w}px"
+  style="left:{note.x}px; top:{note.y}px; width:{note.w}px; height:{note.h}px; z-index:{note.z}; --family:{fontFamily}; --size:{fontSize}px; --maxw:{note.w}px"
   use:autoHeight={note}
   in:scale={{ duration: 280, start: 0.82, opacity: 0, easing: cubicOut }}
   out:scale={{ duration: 200, start: 0.78, opacity: 0, easing: cubicOut }}
 >
   <div class="inner">
     {#if editing}
-      <textarea
-        bind:this={textarea}
-        bind:value={note.text}
-        placeholder="Write something…"
-        spellcheck="false"
-      ></textarea>
+      <div class="grow">
+        <div class="ghost" aria-hidden="true">{(note.text || "Write something…") + " "}</div>
+        <textarea
+          bind:this={textarea}
+          bind:value={note.text}
+          placeholder="Write something…"
+          spellcheck="false"
+        ></textarea>
+      </div>
     {:else}
       <!-- svelte-ignore a11y_click_events_have_key_events -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -120,69 +119,45 @@
       </div>
     {/if}
 
-    {#if cardOnly && !editing}
-      <ResizeHandles {note} {selected} aspect={mediaAspect} />
-    {/if}
+    <ResizeHandles
+      {note}
+      {selected}
+      {editing}
+      aspect={mediaAspect}
+    />
   </div>
 </div>
 
 <style>
   .note {
     position: absolute;
+    height: auto !important;
     border-radius: 14px;
   }
-
   .inner {
+    position: relative;
     width: 100%;
-    height: 100%;
+    height: auto;
     border-radius: inherit;
-    background: var(--bg);
-    padding: 18px;
-    box-shadow:
-      0 1px 2px rgba(40, 38, 32, 0.08),
-      0 8px 18px rgba(40, 38, 32, 0.1);
+    background: transparent;
+    cursor: grab;
+    overflow: visible;
     transition:
       transform 0.28s var(--ease-soft),
-      box-shadow 0.28s var(--ease-soft),
       filter 0.34s var(--ease-soft),
       opacity 0.34s var(--ease-soft);
-    cursor: grab;
-    overflow: hidden;
   }
-
-  .note:hover .inner {
-    transform: translateY(-3px);
-    box-shadow:
-      0 2px 4px rgba(40, 38, 32, 0.1),
-      0 14px 30px rgba(40, 38, 32, 0.16);
-  }
-
   .note.dragging .inner {
     cursor: grabbing;
-    transform: translateY(-4px) scale(1.02) rotate(-1.2deg);
-    box-shadow:
-      0 4px 8px rgba(40, 38, 32, 0.14),
-      0 26px 50px rgba(40, 38, 32, 0.24);
+    transform: translateY(-4px) rotate(-1.1deg);
   }
-
   .note.editing .inner {
-    transform: scale(1.015);
     cursor: text;
-    box-shadow:
-      0 3px 6px rgba(40, 38, 32, 0.12),
-      0 22px 46px rgba(40, 38, 32, 0.2);
   }
-
-  .note.selected .inner {
-    outline: 2px solid var(--ink-soft);
-    outline-offset: var(--sel-offset);
-  }
-
   .note.doomed .inner {
     transform: scale(0.82) rotate(-3deg);
     opacity: 0.55;
   }
-
   .note.dimmed {
     pointer-events: none;
   }
@@ -193,72 +168,71 @@
     filter: drop-shadow(0 22px 48px rgba(40, 38, 32, 0.34));
   }
 
-  .text,
-  textarea {
+  .text {
+    position: relative;
+    width: 100%;
+    height: auto;
+    padding: 14px 18px;
+    border-radius: 14px;
+  }
+  .note.selected .text {
+    outline: 2px solid var(--ink-soft);
+    outline-offset: var(--sel-offset);
+  }
+  /* media-only transparent notes (a lone image/video/link) sit flush, like cards */
+  .note.asset-only .text {
+    padding: 0;
+  }
+  /* square selection ring for square media (image / video / youtube) */
+  .note.square .text {
+    border-radius: 0;
+  }
+
+  .grow {
+    position: relative;
+    width: 100%;
+    padding: 14px 18px;
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.45);
+    box-shadow: 0 10px 28px rgba(40, 38, 32, 0.14);
+  }
+  .grow .ghost,
+  .grow > textarea {
+    margin: 0;
+    font-family: var(--family, inherit);
+    font-size: var(--size, 19px);
+    line-height: 1.45;
+    font-weight: 500;
+    color: var(--ink);
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-wrap: break-word;
+  }
+  .grow .ghost {
+    padding: 0;
+    min-height: 1.45em;
+    visibility: hidden;
+  }
+  .grow > textarea {
+    position: absolute;
+    inset: 0;
     width: 100%;
     height: 100%;
+    padding: 14px 18px;
+    box-sizing: border-box;
+    overflow: hidden;
+    resize: none;
   }
 
   textarea {
-    white-space: pre-wrap;
     border: none;
     outline: none;
     resize: none;
     background: transparent;
     user-select: text;
     -webkit-user-select: text;
-    font-family: var(--family, inherit);
-    font-size: var(--size, 19px);
-    line-height: 1.45;
-    font-weight: 500;
-    color: var(--ink);
-    word-break: break-word;
-    overflow-wrap: break-word;
   }
   textarea::placeholder {
     color: rgba(67, 65, 59, 0.38);
-  }
-
-  .note.asset-only:not(.media-box) {
-    height: auto !important;
-  }
-  /* YouTube cards keep their explicit stored height and let the player fill the
-     whole box so the video covers the card at any 2D size the user drags. */
-  .note.asset-only.media-box .inner {
-    height: 100%;
-  }
-  .note.media-box :global(.yt) {
-    height: 100%;
-    aspect-ratio: auto;
-  }
-  .note.asset-only .inner {
-    position: relative;
-    height: auto;
-    padding: 0;
-    background: transparent;
-    box-shadow: none;
-    overflow: visible;
-  }
-  .note.asset-only:hover .inner,
-  .note.asset-only.selected:hover .inner {
-    box-shadow: none;
-    transform: none;
-  }
-  .note.asset-only .note-img {
-    width: 100%;
-    margin: 0;
-    border-radius: 0;
-  }
-  /* square selection ring for square media (image / video / youtube) */
-  .note.square .inner {
-    border-radius: 0;
-  }
-  .note.asset-only .note-img + .note-img {
-    margin-top: 6px;
-  }
-  .note.asset-only :global(.vplayer),
-  .note.asset-only :global(.note-audio),
-  .note.asset-only :global(.link) {
-    margin: 0;
   }
 </style>
